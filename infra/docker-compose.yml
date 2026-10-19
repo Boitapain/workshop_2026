@@ -1,0 +1,415 @@
+# RESILIENCE-ALPHA — plateforme complète sur le PC Hôte.
+# Démarrage : python scripts/init_secrets.py && docker compose -f infra/docker-compose.yml up -d --build
+name: resilience
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+x-python-health: &python-health
+  interval: 5s
+  timeout: 2s
+  retries: 3
+  start_period: 15s
+
+services:
+  # ───────────────────────────── Données ─────────────────────────────
+  postgres:
+    <<: *hardening
+    image: postgres:16-alpine
+    read_only: false            # PGDATA et le socket nécessitent l'écriture
+    # Journalisation des écritures (SIEM : détection d'altération) sans les valeurs des paramètres.
+    command: [postgres, -c, log_statement=mod, -c, log_parameter_max_length=0, -c, "log_line_prefix=%m user=%u db=%d "]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    environment:
+      POSTGRES_DB: resilience
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_superuser_password
+    secrets: [db_superuser_password, db_auth_password, db_payment_password, db_backup_password, db_exporter_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/01-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./postgres/02-roles.sh:/docker-entrypoint-initdb.d/02-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d resilience"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    mem_limit: 512m
+    networks: [data]
+    labels:
+      resilience.remediable: "true"
+      resilience.tier: "data"
+
+  pg-backup:
+    <<: *hardening
+    build: { context: ../services, dockerfile: pg-backup/Dockerfile }
+    image: resilience/pg-backup:dev
+    environment:
+      BACKUP_INTERVAL: "120"
+      BACKUP_RETENTION: "3600"
+    secrets: [db_backup_password, db_superuser_password, internal_token]
+    volumes:
+      - backups:/backups
+    depends_on:
+      postgres: { condition: service_healthy }
+    mem_limit: 256m
+    networks: [data, control, monitoring]
+    labels:
+      resilience.tier: "data"
+
+  # ───────────────────────────── Métier ─────────────────────────────
+  auth-service:
+    <<: *hardening
+    build: { context: ../services, dockerfile: auth-service/Dockerfile }
+    image: resilience/auth-service:dev
+    user: "10001:10001"
+    secrets: [db_auth_password, jwt_private_key, internal_token]
+    healthcheck:
+      <<: *python-health
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/ready',timeout=2)"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 200
+    networks: [app, data, monitoring, control]
+    labels:
+      resilience.remediable: "true"
+      resilience.tier: "business"
+
+  payment-service:
+    <<: *hardening
+    build: { context: ../services, dockerfile: payment-service/Dockerfile }
+    image: resilience/payment-service:dev
+    user: "10001:10001"
+    secrets: [db_payment_password, internal_token]
+    healthcheck:
+      <<: *python-health
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/ready',timeout=2)"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      auth-service: { condition: service_healthy }
+    mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 200
+    networks: [app, data, monitoring, control]
+    labels:
+      resilience.remediable: "true"
+      resilience.tier: "business"
+
+  front:
+    <<: *hardening
+    build: { context: ../services/front }
+    image: resilience/front:dev
+    tmpfs: [/tmp, /var/cache/nginx]
+    mem_limit: 64m
+    networks: [app]
+    labels:
+      resilience.remediable: "true"
+      resilience.tier: "business"
+
+  waf:
+    <<: *hardening
+    image: owasp/modsecurity-crs:4.25.2-nginx-alpine-lts
+    read_only: false            # l'entrypoint de l'image génère sa configuration au démarrage
+    environment:
+      BLOCKING_PARANOIA: "1"
+      ANOMALY_INBOUND: "5"
+      MODSEC_AUDIT_LOG_FORMAT: JSON
+      MODSEC_AUDIT_LOG: /dev/stdout
+      MODSEC_RESP_BODY_ACCESS: "off"
+      SSL_CERT_FILE: /run/secrets/tls_cert
+      SSL_CERT_KEY_FILE: /run/secrets/tls_key
+    secrets: [tls_cert, tls_key]
+    volumes:
+      - ./waf/default.conf.template:/etc/nginx/templates/conf.d/default.conf.template:ro
+      - ./waf/logging.conf.template:/etc/nginx/templates/conf.d/logging.conf.template:ro
+      - waf-dynamic:/etc/nginx/dynamic:ro
+    ports:
+      - "443:8443"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --no-check-certificate -O /dev/null https://127.0.0.1:8443/healthz || exit 1"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+    depends_on:
+      front: { condition: service_started }
+      auth-service: { condition: service_healthy }
+      payment-service: { condition: service_healthy }
+      remediation-engine: { condition: service_started }   # crée le volume waf-dynamic avec les bons droits
+    mem_limit: 256m
+    networks:
+      edge: {}
+      app: {}
+      control: {}
+    labels:
+      resilience.remediable: "true"
+      resilience.tier: "edge"
+      resilience.role: "waf"
+
+  synthetic-probe:
+    <<: *hardening
+    build: { context: ../services, dockerfile: synthetic-probe/Dockerfile }
+    image: resilience/synthetic-probe:dev
+    user: "10001:10001"
+    environment:
+      PROBE_TARGET: https://waf:8443
+      PROBE_INTERVAL: "5"
+    secrets: [probe_password, tls_cert]
+    depends_on:
+      waf: { condition: service_healthy }
+    mem_limit: 128m
+    networks:
+      app: { ipv4_address: 172.30.1.50 }
+      monitoring: {}
+      control: {}
+
+  traffic-gen:
+    <<: *hardening
+    build: { context: ../services/traffic-gen }
+    image: resilience/traffic-gen:dev
+    environment:
+      USERS: "20"
+      BASE_RATE: "4"
+    secrets: [traffic_password, tls_cert]
+    depends_on:
+      waf: { condition: service_healthy }
+    mem_limit: 128m
+    networks: [app]
+
+  # ───────────────────────── Accès Docker filtrés ─────────────────────────
+  # Aucun service applicatif ne monte le socket Docker. Deux proxys à liste blanche (regex par méthode HTTP).
+  docker-proxy-ro:
+    <<: *hardening
+    image: wollomatic/socket-proxy:1.10.0
+    command:
+      - -listenip=0.0.0.0
+      - -allowfrom=alloy,ml-detector
+      - -allowGET=^/(v[0-9.]+/)?(containers/json|containers/[a-zA-Z0-9_.-]+/(json|logs|stats)|networks|events|version|info|_ping)$
+      - -watchdoginterval=0
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock:ro"]
+    user: "0:0"                 # lecture du socket ; le proxy ne relaie que les GET listés
+    mem_limit: 64m
+    networks: [monitoring]
+
+  docker-proxy-rw:
+    <<: *hardening
+    image: wollomatic/socket-proxy:1.10.0
+    command:
+      - -listenip=0.0.0.0
+      - -allowfrom=remediation-engine
+      # Lecture : liste des conteneurs. Écriture : UNIQUEMENT restart et kill (SIGHUP de rechargement du WAF).
+      - -allowGET=^/(v[0-9.]+/)?containers/json$
+      - -allowPOST=^/(v[0-9.]+/)?containers/[a-zA-Z0-9_.-]+/(restart|kill)$
+      - -watchdoginterval=0
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock:ro"]
+    user: "0:0"
+    mem_limit: 64m
+    networks: [control]
+
+  # ───────────────────────── Observabilité / SIEM ─────────────────────────
+  prometheus:
+    <<: *hardening
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=48h
+      - --web.enable-lifecycle
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    mem_limit: 512m
+    networks: [monitoring, control, admin]
+
+  alertmanager:
+    <<: *hardening
+    image: prom/alertmanager:v0.28.1
+    command: [--config.file=/etc/alertmanager/alertmanager.yml, --storage.path=/tmp]
+    volumes: ["./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro"]
+    secrets: [internal_token]
+    mem_limit: 64m
+    networks: [monitoring, control]
+
+  loki:
+    <<: *hardening
+    image: grafana/loki:3.5.3
+    command: [-config.file=/etc/loki/loki.yml]
+    volumes:
+      - ./observability/loki.yml:/etc/loki/loki.yml:ro
+      - ./observability/loki-rules:/etc/loki/rules:ro
+      - loki-data:/loki
+    mem_limit: 512m
+    networks: [monitoring, control]
+
+  alloy:
+    <<: *hardening
+    image: grafana/alloy:v1.10.2
+    user: "473:473"
+    command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy/data, --server.http.listen-addr=0.0.0.0:12345]
+    volumes:
+      - ./observability/alloy.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy
+    depends_on: [loki, docker-proxy-ro]
+    mem_limit: 256m
+    networks: [monitoring]
+
+  postgres-exporter:
+    <<: *hardening
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    environment:
+      DATA_SOURCE_URI: postgres:5432/resilience?sslmode=disable
+      DATA_SOURCE_USER: exporter
+      DATA_SOURCE_PASS_FILE: /run/secrets/db_exporter_password
+    secrets: [db_exporter_password]
+    mem_limit: 64m
+    networks: [data, monitoring]
+
+  grafana:
+    <<: *hardening
+    image: grafana/grafana:12.1.1
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/resilience.json
+    secrets: [grafana_admin_password]
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["127.0.0.1:3000:3000"]
+    mem_limit: 256m
+    networks: [monitoring, admin]
+
+  # ───────────────────────── Détection & remédiation ─────────────────────────
+  ml-detector:
+    <<: *hardening
+    build: { context: ../services, dockerfile: ml-detector/Dockerfile }
+    image: resilience/ml-detector:dev
+    user: "10001:10001"
+    environment:
+      BASELINE_SAMPLES: "120"
+      CONSECUTIVE_WINDOWS: "2"
+    secrets: [internal_token]
+    volumes:
+      - ml-models:/models
+      - ml-data:/data
+    depends_on: [prometheus, loki, docker-proxy-ro]
+    mem_limit: 384m
+    networks: [monitoring, control]
+
+  remediation-engine:
+    <<: *hardening
+    build: { context: ../services, dockerfile: remediation-engine/Dockerfile }
+    image: resilience/remediation-engine:dev
+    user: "10001:10001"
+    environment:
+      DRY_RUN: "false"
+    secrets: [internal_token]
+    volumes:
+      - remediation-data:/data
+      - waf-dynamic:/waf-dynamic
+    depends_on: [docker-proxy-rw]
+    mem_limit: 256m
+    networks:
+      control: { ipv4_address: 172.30.4.10 }
+      monitoring: {}
+
+  dashboard:
+    <<: *hardening
+    build: { context: ../services/dashboard }
+    image: resilience/dashboard:dev
+    tmpfs: [/tmp, /var/cache/nginx]
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on: [remediation-engine, prometheus, synthetic-probe, ml-detector]
+    mem_limit: 64m
+    networks: [control, admin]
+
+  # ───────────────────────── Assistant RAG (facultatif) ─────────────────────────
+  # docker compose --profile rag up -d                    → LLM sur le PC IA (OLLAMA_URL)
+  # docker compose --profile rag --profile llm-local up -d → LLM sur le PC Hôte (~6 Go de RAM en plus)
+  rag-assistant:
+    <<: *hardening
+    profiles: [rag]
+    build: { context: ../services, dockerfile: rag-assistant/Dockerfile }
+    image: resilience/rag-assistant:dev
+    user: "10001:10001"
+    environment:
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      LLM_MODEL: ${LLM_MODEL:-llama3.1:8b}
+      EMBED_MODEL: nomic-embed-text
+    volumes:
+      - ../docs:/corpus/docs:ro
+      - ../services/remediation-engine/policy.yaml:/corpus/policy.yaml:ro
+    mem_limit: 512m
+    networks: [control, llm]
+
+  ollama:
+    profiles: [llm-local]
+    image: ollama/ollama:0.11.10
+    restart: unless-stopped
+    volumes: [ollama-models:/root/.ollama]
+    mem_limit: 8g
+    networks: [llm]
+
+secrets:
+  db_superuser_password: { file: ../secrets/db_superuser_password }
+  db_auth_password:      { file: ../secrets/db_auth_password }
+  db_payment_password:   { file: ../secrets/db_payment_password }
+  db_backup_password:    { file: ../secrets/db_backup_password }
+  db_exporter_password:  { file: ../secrets/db_exporter_password }
+  internal_token:        { file: ../secrets/internal_token }
+  probe_password:        { file: ../secrets/probe_password }
+  traffic_password:      { file: ../secrets/traffic_password }
+  grafana_admin_password: { file: ../secrets/grafana_admin_password }
+  dashboard_password:    { file: ../secrets/dashboard_password }
+  jwt_private_key:       { file: ../secrets/jwt_private_key }
+  tls_cert:              { file: ../secrets/tls_cert }
+  tls_key:               { file: ../secrets/tls_key }
+
+volumes:
+  pgdata:
+  backups:
+  waf-dynamic:
+  prometheus-data:
+  loki-data:
+  alloy-data:
+  grafana-data:
+  ml-models:
+  ml-data:
+  remediation-data:
+  ollama-models:
+
+networks:
+  edge:
+    ipam: { config: [{ subnet: 172.30.0.0/24 }] }
+  # Interfaces d'administration (Prometheus, Grafana, dashboard) : publiées sur 127.0.0.1 uniquement,
+  # sans sortie vers Internet (pas de NAT sortant).
+  # Accès au LLM (PC IA sur le hotspot, ou conteneur ollama local) et téléchargement des modèles.
+  llm:
+    ipam: { config: [{ subnet: 172.30.6.0/24 }] }
+  admin:
+    driver_opts: { com.docker.network.bridge.enable_ip_masquerade: "false" }
+    ipam: { config: [{ subnet: 172.30.5.0/24 }] }
+  app:
+    internal: true
+    ipam: { config: [{ subnet: 172.30.1.0/24 }] }
+  data:
+    internal: true
+    ipam: { config: [{ subnet: 172.30.2.0/24 }] }
+  monitoring:
+    internal: true
+    ipam: { config: [{ subnet: 172.30.3.0/24 }] }
+  control:
+    internal: true
+    ipam: { config: [{ subnet: 172.30.4.0/24 }] }

@@ -1,0 +1,120 @@
+# RESILIENCE-ALPHA — WAF (Nginx + ModSecurity v3 + OWASP CRS)
+# Seul point d'entrée exposé sur le réseau du labo. Monté à la place du template par défaut de l'image.
+
+server_tokens off;
+more_set_headers 'Server: resilience';
+
+# --- Contrôles pilotés dynamiquement par le moteur de remédiation ---------------------------
+# Le moteur écrit des fichiers dans /etc/nginx/dynamic puis envoie SIGHUP (rechargement à chaud).
+# Les include à motif « * » tolèrent l'absence de fichier : le WAF démarre même sans le moteur.
+geo $blocked_ip {
+    default 0;
+    include /etc/nginx/dynamic/*.deny;          # lignes « 192.168.137.42 1; »
+}
+# Empreinte IP + User-Agent : utilisée quand l'IP seule n'est pas exploitable
+# (ex. NAT de Docker Desktop : tous les clients externes arrivent depuis la passerelle 172.30.0.1).
+map "$remote_addr|$http_user_agent" $blocked_fp {
+    default 0;
+    include /etc/nginx/dynamic/*.fpdeny;        # lignes « "172.30.0.1|python-requests/2.32" 1; »
+}
+map "$blocked_ip$blocked_fp" $blocked {
+    default 1;
+    "00"    0;
+}
+map $server_port $strict_on {
+    default 0;
+    include /etc/nginx/dynamic/*.strict;         # « 8443 1; » quand le mode strict est actif
+}
+# Les réseaux internes (sonde, trafic de référence) ne sont jamais soumis au mode strict.
+geo $internal_client {
+    default 0;
+    172.30.1.0/24 1;
+}
+map "$strict_on:$internal_client" $strict_key {
+    default "";                                  # clé vide = pas de limitation stricte
+    "1:0"   $binary_remote_addr;
+}
+
+limit_req_zone $binary_remote_addr zone=api:10m    rate=30r/s;
+limit_req_zone $binary_remote_addr zone=login:10m  rate=5r/s;
+limit_req_zone $strict_key         zone=strict:10m rate=3r/s;
+limit_req_status 429;
+
+upstream front_upstream   { server front:8080;            keepalive 8; }
+upstream auth_upstream    { server auth-service:8000;     keepalive 16; }
+upstream payment_upstream { server payment-service:8000;  keepalive 16; }
+
+server {
+    listen 8443 ssl;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     /run/secrets/tls_cert;
+    ssl_certificate_key /run/secrets/tls_key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_session_cache   shared:TLS:10m;
+    ssl_session_tickets off;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer always;
+    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'" always;
+
+    client_max_body_size 64k;
+
+    if ($blocked) {
+        return 403;
+    }
+
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Request-ID $request_id;
+    proxy_connect_timeout 2s;
+    proxy_read_timeout 10s;
+
+    # --- API d'authentification : liste blanche explicite des routes publiques ---
+    location ~ ^/api/auth/(login|register|refresh|logout)$ {
+        limit_req zone=login burst=10 nodelay;
+        limit_req zone=strict burst=3 nodelay;
+        proxy_pass http://auth_upstream/auth/$1;
+    }
+
+    # --- API de paiement ---
+    location ~ "^/api/(accounts/me|payments(/[0-9a-f-]{36})?)$" {
+        limit_req zone=api burst=60 nodelay;
+        limit_req zone=strict burst=5 nodelay;
+        proxy_pass http://payment_upstream/$1$is_args$args;
+    }
+
+    # Tout le reste de /api (dont /internal, /metrics, /health des services) est invisible de l'extérieur.
+    location /api/ {
+        return 404;
+    }
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "OK";
+    }
+
+    # --- Front client (SPA) ---
+    location / {
+        limit_req zone=strict burst=20 nodelay;
+        proxy_pass http://front_upstream;
+    }
+}
+
+# Point de statut interne (réseau Docker uniquement, non publié sur l'hôte).
+server {
+    listen 8080;
+    location = /stub_status {
+        stub_status;
+        access_log off;
+    }
+}

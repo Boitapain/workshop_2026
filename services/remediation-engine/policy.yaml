@@ -1,0 +1,82 @@
+# Politique de remédiation de RESILIENCE-ALPHA.
+# Déterministe et auditable : le ML qualifie l'incident (type), cette politique décide des actions.
+# Chaque playbook correspond à un scénario opérationnel EBIOS (docs/07-gouvernance.md).
+
+defaults:
+  min_anomaly_score: 0.6        # en dessous, l'événement ML est journalisé mais ignoré
+  min_confidence: 0.5
+  correlation_window_s: 120     # événements du même type regroupés dans un seul incident
+  verify_timeout_s: 60          # délai pour obtenir une transaction témoin réussie
+  max_escalations: 2            # nombre de playbooks de repli enchaînés au maximum
+  global_budget: { actions: 15, per_seconds: 300 }   # au-delà → ESCALATED (anti-boucle)
+
+protected:
+  # Jamais bloquées : réseau interne Docker (sonde, générateur de trafic, services).
+  ips: ["172.30.1.0/24", "172.30.2.0/24", "172.30.3.0/24", "172.30.4.0/24", "127.0.0.0/8"]
+  # Passerelles NAT : bloquer leur IP couperait TOUS les clients externes → blocage par empreinte.
+  nat_gateways: ["172.30.0.1"]
+  user_agents: ["resilience-probe/1.0", "resilience-traffic/1.0"]
+  containers: ["remediation-engine", "ml-detector", "prometheus", "loki", "alertmanager"]
+
+playbooks:
+  brute_force:
+    steps:
+      - { action: block_source, ttl_s: 900 }
+      - { action: revoke_sessions, scope: recent_failures }
+    escalate_to: flood_protection
+
+  injection:
+    steps:
+      - { action: block_source, ttl_s: 1800 }
+    escalate_to: data_tampering
+
+  http_flood:
+    steps:
+      - { action: block_source, ttl_s: 600 }
+      - { action: rate_limit_strict, ttl_s: 300 }
+    escalate_to: service_crash
+
+  flood_protection:
+    steps:
+      - { action: rate_limit_strict, ttl_s: 300 }
+
+  service_crash:
+    steps:
+      - { action: restart_container, target: "{suspect_container}" }
+    escalate_to: restart_business
+
+  restart_business:
+    steps:
+      - { action: restart_container, target: payment-service }
+      - { action: restart_container, target: auth-service }
+
+  resource_exhaustion:
+    steps:
+      - { action: restart_container, target: "{suspect_container}" }
+      - { action: rate_limit_strict, ttl_s: 300 }
+    escalate_to: restart_business
+
+  db_outage:
+    steps:
+      - { action: restart_container, target: postgres }
+    escalate_to: restore_db
+
+  restore_db:
+    steps:
+      - { action: maintenance_mode, enabled: true }
+      - { action: restore_db }
+      - { action: maintenance_mode, enabled: false }
+
+  data_tampering:
+    steps:
+      - { action: maintenance_mode, enabled: true }
+      - { action: block_source, ttl_s: 3600 }
+      - { action: restore_db }
+      - { action: revoke_sessions, scope: global }
+      - { action: maintenance_mode, enabled: false }
+
+  service_outage:
+    # Alerte SIEM « transaction témoin en échec » sans cause qualifiée : redémarrage du chemin métier.
+    steps:
+      - { action: restart_container, target: "{suspect_container}" }
+    escalate_to: restart_business

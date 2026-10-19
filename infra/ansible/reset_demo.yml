@@ -1,0 +1,46 @@
+# Remise à zéro avant une démo : lève les blocages WAF, désactive le mode maintenance,
+# vérifie l'absence d'incident ouvert et la santé de la sonde.
+- name: Préparer la démo
+  hosts: host
+  gather_facts: false
+  vars:
+    root: "{{ playbook_dir }}/../.."
+    compose: "docker compose -f {{ root }}/infra/docker-compose.yml"
+  tasks:
+    - name: Lever tous les blocages WAF
+      ansible.builtin.command: >-
+        {{ compose }} exec -T remediation-engine python -c
+        "import httpx;t=open('/run/secrets/internal_token').read().strip();
+        print(httpx.post('http://localhost:8000/admin/reset',headers={'Authorization':'Bearer '+t}).text)"
+      changed_when: true
+
+    - name: Désactiver le mode lecture seule du paiement
+      ansible.builtin.command: >-
+        {{ compose }} exec -T remediation-engine python -c
+        "import httpx;t=open('/run/secrets/internal_token').read().strip();
+        print(httpx.post('http://payment-service:8000/internal/maintenance',json={'on':False},headers={'Authorization':'Bearer '+t}).text)"
+      changed_when: true
+
+    - name: Vérifier qu'aucun incident n'est en cours
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/engine/status
+        return_content: true
+      register: st
+      failed_when: st.json.open_incidents > 0
+
+    - name: Vérifier que le ML est en détection active
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/ml/status
+        return_content: true
+      register: ml
+      failed_when: ml.json.state != 'active'
+
+    - name: Vérifier la transaction témoin
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/probe/last
+        return_content: true
+      register: probe
+      failed_when: not probe.json.ok
+
+    - ansible.builtin.debug:
+        msg: "Prêt pour la démo — ML {{ ml.json.model_version }}, aucun incident ouvert, sonde OK."

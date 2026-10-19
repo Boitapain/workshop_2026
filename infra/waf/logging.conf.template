@@ -1,0 +1,8 @@
+# Journal d'accès JSON sur stdout → collecté par Alloy → Loki (SIEM + features ML).
+log_format json escape=json '{"log_type":"access","ts":"$time_iso8601","remote_addr":"$remote_addr",'
+    '"method":"$request_method","uri":"$uri","status":$status,"bytes":$body_bytes_sent,'
+    '"request_time":$request_time,"upstream_time":"$upstream_response_time",'
+    '"user_agent":"$http_user_agent","request_id":"$request_id","blocked":$blocked}';
+
+access_log /dev/stdout json;
+error_log /dev/stderr warn;

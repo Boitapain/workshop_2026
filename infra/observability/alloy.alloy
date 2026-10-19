@@ -1,0 +1,35 @@
+// Collecte des journaux de tous les conteneurs du projet « resilience » → Loki.
+// Accès Docker via un proxy en lecture seule (pas de socket brut monté).
+discovery.docker "containers" {
+  host = "tcp://docker-proxy-ro:2375"
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=resilience"]
+  }
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "tcp://docker-proxy-ro:2375"
+  targets       = discovery.relabel.containers.output
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

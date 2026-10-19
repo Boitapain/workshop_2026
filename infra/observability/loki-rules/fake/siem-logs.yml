@@ -1,0 +1,22 @@
+# Règles SIEM sur les journaux (Loki ruler). Tenant « fake » = mode mono-tenant de Loki.
+groups:
+  - name: resilience-siem-logs
+    interval: 10s
+    rules:
+      - alert: AuthFailureSurge
+        expr: sum(count_over_time({service="auth-service"} |= "auth.login.failure" [1m])) > 40
+        labels: { severity: warning, category: security, incident_type: brute_force }
+        annotations:
+          summary: "Pic d'échecs d'authentification"
+
+      - alert: WafBlockSurge
+        expr: sum(count_over_time({service="waf"} |= "\"log_type\":\"access\"" |= "\"status\":403" [1m])) > 30
+        labels: { severity: warning, category: security, incident_type: injection }
+        annotations:
+          summary: "Pic de requêtes bloquées par le WAF"
+
+      - alert: MassDataModification
+        expr: sum(count_over_time({service="postgres"} != "user=postgres" |~ "(?i)statement: *(delete|truncate|drop)" [1m])) > 0
+        labels: { severity: critical, category: security, incident_type: data_tampering }
+        annotations:
+          summary: "Commandes destructives détectées dans les journaux PostgreSQL"

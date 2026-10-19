@@ -1,0 +1,70 @@
+# Déploiement complet de RESILIENCE-ALPHA sur le PC Hôte (à lancer depuis WSL ou Linux).
+#   ansible-playbook infra/ansible/deploy.yml
+- name: Déployer RESILIENCE-ALPHA
+  hosts: host
+  gather_facts: false
+  vars:
+    root: "{{ playbook_dir }}/../.."
+    compose: "docker compose -f {{ root }}/infra/docker-compose.yml"
+    host_ip: "192.168.137.1"
+  tasks:
+    - name: Vérifier les prérequis (docker, compose, openssl)
+      ansible.builtin.command: "{{ item }}"
+      loop: ["docker version --format '{{ '{{' }}.Server.Version{{ '}}' }}'", "docker compose version", "openssl version"]
+      changed_when: false
+
+    - name: Générer les secrets locaux manquants (jamais écrasés)
+      ansible.builtin.command: "python3 {{ root }}/scripts/init_secrets.py --host-ip {{ host_ip }}"
+      register: secrets_out
+      changed_when: "' + ' in secrets_out.stdout"
+
+    - name: Ouvrir une fenêtre de maintenance (le moteur ne « répare » pas un déploiement volontaire)
+      ansible.builtin.command: >-
+        {{ compose }} exec -T remediation-engine python -c
+        "import httpx;t=open('/run/secrets/internal_token').read().strip();
+        print(httpx.post('http://localhost:8000/admin/pause',json={'seconds':900},headers={'Authorization':'Bearer '+t}).text)"
+      register: pause
+      failed_when: false          # premier déploiement : le moteur n'existe pas encore
+      changed_when: pause.rc == 0
+
+    - name: Construire les images et démarrer la plateforme
+      ansible.builtin.command: "{{ compose }} up -d --build --remove-orphans"
+      changed_when: true
+
+    - name: Attendre que le WAF réponde
+      ansible.builtin.uri:
+        url: https://127.0.0.1/healthz
+        validate_certs: false
+      register: waf
+      until: waf.status == 200
+      retries: 40
+      delay: 3
+
+    - name: Attendre une transaction témoin réussie (preuve de bon fonctionnement)
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/probe/last
+        return_content: true
+      register: probe
+      until: probe.json is defined and probe.json.ok | default(false)
+      retries: 40
+      delay: 3
+
+    - name: Fermer la fenêtre de maintenance
+      ansible.builtin.command: >-
+        {{ compose }} exec -T remediation-engine python -c
+        "import httpx;t=open('/run/secrets/internal_token').read().strip();
+        print(httpx.post('http://localhost:8000/admin/resume',headers={'Authorization':'Bearer '+t}).text)"
+      changed_when: true
+
+    - name: État du détecteur ML
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/ml/status
+        return_content: true
+      register: ml
+
+    - name: Résumé
+      ansible.builtin.debug:
+        msg:
+          - "Transaction témoin OK : {{ probe.json.transaction_id }}"
+          - "ML : {{ ml.json.state }} (progression référence {{ (ml.json.baseline_progress * 100) | round }} %)"
+          - "Dashboard ops : http://127.0.0.1:8080  —  Grafana : http://127.0.0.1:3000  —  Front : https://{{ host_ip }}/"

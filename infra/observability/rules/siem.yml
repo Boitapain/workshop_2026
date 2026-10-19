@@ -1,0 +1,32 @@
+# Règles de corrélation « SIEM » côté métriques. Elles complètent le ML (filet de sécurité) :
+# le ML reste le déclencheur principal, ces alertes corroborent et couvrent sa propre panne.
+groups:
+  - name: resilience-siem
+    rules:
+      - alert: ProbeTransactionFailing
+        expr: probe_success == 0
+        for: 20s
+        labels: { severity: critical, category: availability, incident_type: service_outage }
+        annotations:
+          summary: "La transaction témoin échoue depuis plus de 20 s"
+
+      - alert: BusinessTargetDown
+        expr: up{job=~"auth-service|payment-service"} == 0
+        for: 15s
+        labels: { severity: critical, category: availability, incident_type: service_crash }
+        annotations:
+          summary: "{{ $labels.job }} ne répond plus au scrape"
+
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 15s
+        labels: { severity: critical, category: availability, incident_type: db_outage }
+        annotations:
+          summary: "PostgreSQL injoignable"
+
+      - alert: BackupFailing
+        expr: backup_error == 1
+        for: 5m
+        labels: { severity: warning, category: resilience }
+        annotations:
+          summary: "Les sauvegardes échouent : le PRA est dégradé"

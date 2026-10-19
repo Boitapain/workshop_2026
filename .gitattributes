@@ -1,0 +1,13 @@
+# Fichiers exécutés dans des conteneurs Linux : fins de ligne LF obligatoires,
+# même si le dépôt est cloné sous Windows (sinon les scripts d'init PostgreSQL échouent).
+*.sh        text eol=lf
+*.py        text eol=lf
+*.sql       text eol=lf
+*.conf      text eol=lf
+*.template  text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.alloy     text eol=lf
+*.json      text eol=lf
+Dockerfile  text eol=lf
+*.pptx      binary

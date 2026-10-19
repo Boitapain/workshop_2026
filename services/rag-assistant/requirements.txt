@@ -1,0 +1,6 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+httpx==0.28.1
+langchain-core>=0.3.60,<0.4
+langchain-ollama>=0.3.3,<0.4
+langchain-text-splitters>=0.3.8,<0.4

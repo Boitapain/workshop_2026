@@ -1,0 +1,23 @@
+# Secrets générés localement — jamais commités (seuls les *.enc.yaml SOPS le sont)
+secrets/*
+!secrets/README.md
+!secrets/*.enc.yaml
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+
+# Données ML / runtime
+ml/data/*.parquet
+ml/data/*.csv
+!ml/data/.gitkeep
+
+# Office temp files
+~$*

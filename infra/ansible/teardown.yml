@@ -1,0 +1,12 @@
+# Arrêt de la plateforme. Purge des données : ansible-playbook teardown.yml -e purge=true
+- name: Arrêter RESILIENCE-ALPHA
+  hosts: host
+  gather_facts: false
+  vars:
+    root: "{{ playbook_dir }}/../.."
+    purge: false
+  tasks:
+    - name: Arrêter les conteneurs
+      ansible.builtin.command: >-
+        docker compose -f {{ root }}/infra/docker-compose.yml down {{ '-v' if purge | bool else '' }}
+      changed_when: true
