@@ -51,6 +51,7 @@ services:
     <<: *hardening
     build: { context: ../services, dockerfile: pg-backup/Dockerfile }
     image: resilience/pg-backup:dev
+    pull_policy: build
     environment:
       BACKUP_INTERVAL: "120"
       BACKUP_RETENTION: "3600"
@@ -69,6 +70,7 @@ services:
     <<: *hardening
     build: { context: ../services, dockerfile: auth-service/Dockerfile }
     image: resilience/auth-service:dev
+    pull_policy: build
     user: "10001:10001"
     secrets: [db_auth_password, jwt_private_key, internal_token]
     healthcheck:
@@ -88,6 +90,7 @@ services:
     <<: *hardening
     build: { context: ../services, dockerfile: payment-service/Dockerfile }
     image: resilience/payment-service:dev
+    pull_policy: build
     user: "10001:10001"
     secrets: [db_payment_password, internal_token]
     healthcheck:
@@ -108,6 +111,7 @@ services:
     <<: *hardening
     build: { context: ../services/front }
     image: resilience/front:dev
+    pull_policy: build
     tmpfs: [/tmp, /var/cache/nginx]
     mem_limit: 64m
     networks: [app]
@@ -158,6 +162,7 @@ services:
     <<: *hardening
     build: { context: ../services, dockerfile: synthetic-probe/Dockerfile }
     image: resilience/synthetic-probe:dev
+    pull_policy: build
     user: "10001:10001"
     environment:
       PROBE_TARGET: https://waf:8443
@@ -175,6 +180,7 @@ services:
     <<: *hardening
     build: { context: ../services/traffic-gen }
     image: resilience/traffic-gen:dev
+    pull_policy: build
     environment:
       USERS: "20"
       BASE_RATE: "4"
@@ -270,6 +276,8 @@ services:
       DATA_SOURCE_USER: exporter
       DATA_SOURCE_PASS_FILE: /run/secrets/db_exporter_password
     secrets: [db_exporter_password]
+    depends_on:
+      postgres: { condition: service_healthy }
     mem_limit: 64m
     networks: [data, monitoring]
 
@@ -287,6 +295,9 @@ services:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus: { condition: service_started }
+      loki: { condition: service_started }
     ports: ["127.0.0.1:3000:3000"]
     mem_limit: 256m
     networks: [monitoring, admin]
@@ -296,6 +307,7 @@ services:
     <<: *hardening
     build: { context: ../services, dockerfile: ml-detector/Dockerfile }
     image: resilience/ml-detector:dev
+    pull_policy: build
     user: "10001:10001"
     environment:
       BASELINE_SAMPLES: "120"
@@ -312,6 +324,7 @@ services:
     <<: *hardening
     build: { context: ../services, dockerfile: remediation-engine/Dockerfile }
     image: resilience/remediation-engine:dev
+    pull_policy: build
     user: "10001:10001"
     environment:
       DRY_RUN: "false"
@@ -329,6 +342,7 @@ services:
     <<: *hardening
     build: { context: ../services/dashboard }
     image: resilience/dashboard:dev
+    pull_policy: build
     tmpfs: [/tmp, /var/cache/nginx]
     ports: ["127.0.0.1:8080:8080"]
     depends_on: [remediation-engine, prometheus, synthetic-probe, ml-detector]
@@ -343,6 +357,7 @@ services:
     profiles: [rag]
     build: { context: ../services, dockerfile: rag-assistant/Dockerfile }
     image: resilience/rag-assistant:dev
+    pull_policy: build
     user: "10001:10001"
     environment:
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}

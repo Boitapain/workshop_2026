@@ -133,7 +133,7 @@ function Dashboard({ email, onLogout }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [acc, list] = await Promise.all([api("/accounts/me"), api("/payments?limit=15")]);
+      const [acc, list] = await Promise.all([api("/accounts/me"), api("/payments?limit=25")]);
       setAccount(acc);
       setTxs(list);
       setError("");
@@ -144,13 +144,28 @@ function Dashboard({ email, onLogout }) {
 
   useEffect(() => {
     refresh();
+    const timer = setInterval(refresh, 3000);
+    return () => clearInterval(timer);
   }, [refresh]);
 
   return (
     <div className="mx-auto max-w-4xl p-6">
       <header className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">RESILIENCE Pay</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold">RESILIENCE Pay</h1>
+          <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+            En direct
+          </span>
+        </div>
         <div className="flex items-center gap-4 text-sm text-slate-600">
+          <button
+            className="text-xs font-medium text-slate-500 hover:text-indigo-600"
+            onClick={refresh}
+            title="Rafraîchir maintenant"
+          >
+            ↻ Actualiser
+          </button>
           {email}
           <button className="text-indigo-600 hover:underline" onClick={onLogout}>
             Déconnexion
