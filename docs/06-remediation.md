@@ -125,9 +125,9 @@ Le moteur peut redémarrer des conteneurs et restaurer la base : c'est le compos
 | **Liste blanche de cibles** | Le moteur refuse toute action sur un conteneur sans label `resilience.remediable=true` |
 | **Liste de protection** | IP de l'hôte, réseau Docker, sonde et conteneurs critiques ne peuvent jamais être ciblés (`protected` dans la politique) |
 | **Actions figées** | Le moteur ne peut appeler que les actions codées dans `actions.py` ; la politique est intégrée à l'image (lecture seule) |
-| **Jeton de service** | Les routes `/internal/*` des services exigent un jeton dédié (émis par Vault, TTL court) et ne sont joignables que depuis le réseau `control` |
+| **Jeton de service** | Les routes `/internal/*` des services exigent un jeton dédié (Docker secret `internal_token`, comparé en temps constant) et ne sont joignables que depuis le réseau `control`. Émission par Vault avec TTL court : évolution prévue (ADR-006) |
 | **Aucun secret applicatif** | Le moteur ne détient que le jeton de service interne : ni mot de passe de base, ni clé JWT |
-| **Budget et cooldown** | Max 3 actions par incident, 10 actions par 5 min au total → protège contre une boucle de remédiation ou un attaquant qui chercherait à faire « s'auto-saboter » le système |
+| **Budget et escalade** | Budget global de 15 actions par 5 min (`global_budget` dans `policy.yaml`), au plus 2 playbooks de repli enchaînés (`max_escalations`) ; au-delà → `ESCALATED`. Protège contre une boucle de remédiation ou un attaquant qui chercherait à faire « s'auto-saboter » le système |
 | **Conteneur durci** | non-root, `read_only`, `cap_drop: ALL`, aucun port publié |
 | **Audit** | Chaque action : qui l'a déclenchée (événement source), quoi, quand, résultat ; exporté vers Loki |
 | **Mode `dry-run`** | Variable d'env. pour tester la politique sans agir (utile en recette) |

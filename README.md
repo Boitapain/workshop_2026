@@ -34,7 +34,7 @@ flowchart LR
 | 02 | [DEV — microservices](docs/02-dev-microservices.md) | Services, contrats d'API, modèle de données, dashboard |
 | 03 | [INFRA](docs/03-infra.md) | Docker Compose, Ansible, observabilité, réseau du labo |
 | 04 | [IA / DATA](docs/04-ia-data.md) | Détection d'anomalies ML, dataset, assistant RAG local |
-| 05 | [CYBER](docs/05-cyber.md) | 🚧 Squelette à compléter : menaces, WAF, SIEM, durcissement, secrets |
+| 05 | [CYBER](docs/05-cyber.md) | Modèle de menace, Red Team, WAF, SIEM, durcissement, secrets |
 | 06 | [Remédiation autonome](docs/06-remediation.md) | Moteur de remédiation, playbooks, garde-fous, preuve de reprise |
 | 07 | [TRANSFORMATION — gouvernance](docs/07-gouvernance.md) | EBIOS RM, PCA/PRA, NIS2/DORA, recommandations à la direction |
 | 08 | [Démo, chaos engineering & Clip Chrono](docs/08-demo-chaos.md) | Scénario de démo, tests de chaos, recette, script du clip |
@@ -70,8 +70,7 @@ workshop_2026/
 ├── attack/                   # scripts du PC Attaquant
 ├── chaos/                    # scénarios d'injection de défaillances
 ├── ml/data/                  # étiquettes des campagnes (labels.csv)
-├── secrets/                  # fichiers chiffrés SOPS uniquement (*.enc.yaml)
-└── governance/               # EBIOS, PCA/PRA, NIS2/DORA (sources du dossier PDF)
+└── secrets/                  # fichiers chiffrés SOPS uniquement (*.enc.yaml)
 ```
 
 ## Démarrage rapide

@@ -9,7 +9,7 @@ La grille insiste : risques, PCA/PRA et NIS2/DORA doivent être **reliés à l'a
 | Valeur métier | Description | Biens supports (conteneurs) | Besoins D / I / C / T |
 |---------------|-------------|-----------------------------|-----------------------|
 | VM1 — Exécuter un paiement | Virement entre comptes | waf, front, auth-service, payment-service, postgres | D ++, I +++, C ++, T +++ |
-| VM2 — Authentifier les clients | Connexion, sessions | auth-service, postgres, vault | D ++, I ++, C +++, T ++ |
+| VM2 — Authentifier les clients | Connexion, sessions | auth-service, postgres | D ++, I ++, C +++, T ++ |
 | VM3 — Conserver l'historique | Soldes et transactions | postgres, pg-backup | D +, I +++, C ++, T +++ |
 | VM4 — Superviser et rétablir | Détection et remédiation | prometheus, loki, ml-detector, remediation-engine | D +++, I +++ |
 
@@ -89,14 +89,14 @@ Chaque étape correspond à une action automatisée ([06-remediation.md](06-reme
 |----------|-------|--------------------------|
 | Cadre de gestion du risque TIC | DORA art. 5-6 | Analyse EBIOS RM, politique de remédiation versionnée |
 | Identification des actifs | DORA art. 8 | Inventaire des conteneurs ([01-architecture.md](01-architecture.md)) |
-| Protection et prévention | DORA art. 9 · NIS2 art. 21 | WAF, segmentation, durcissement, Vault, moindre privilège |
+| Protection et prévention | DORA art. 9 · NIS2 art. 21 | WAF, segmentation, durcissement, secrets Docker + SOPS, moindre privilège |
 | Détection des anomalies | DORA art. 10 | ML + SIEM, supervision continue |
 | Réponse et rétablissement | DORA art. 11-12 | Remédiation auto, sauvegardes, restauration testée, RTO/RPO mesurés |
 | Apprentissage | DORA art. 13 | Incidents archivés, RAG pour le retour d'expérience |
 | Gestion et classification des incidents | DORA art. 17-18 | États d'incident, journal d'audit horodaté |
 | Notification des incidents majeurs | DORA art. 19 · NIS2 art. 23 | Le RAG produit un **brouillon** de rapport (notification initiale, intermédiaire, finale) à partir du journal d'audit |
 | Tests de résilience | DORA art. 24-25 | Chaos engineering, rejeu des scénarios EBIOS |
-| Risque lié aux tiers TIC | DORA art. 28 | Images Docker épinglées par digest et scannées ; LLM local (aucune donnée envoyée à un tiers) |
+| Risque lié aux tiers TIC | DORA art. 28 | Images Docker épinglées par version (digest et scan Trivy prévus, voir [05-cyber.md](05-cyber.md) §8) ; LLM local (aucune donnée envoyée à un tiers) |
 | Gouvernance / responsabilité de la direction | DORA art. 5 · NIS2 art. 20 | Recommandations à la direction (§4) |
 
 Délais de notification à rappeler dans le dossier (à vérifier dans les textes et les normes techniques) : NIS2 → alerte précoce sous 24 h, notification sous 72 h, rapport final sous 1 mois. DORA → notification initiale rapide après classification de l'incident comme majeur, puis rapports intermédiaire et final.
