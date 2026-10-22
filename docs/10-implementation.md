@@ -39,14 +39,14 @@ Le certificat TLS est auto-signé (`secrets/tls_cert`) : le navigateur affiche u
 | traffic-gen | `services/traffic-gen/` | ✅ 20 utilisateurs simulés, charge variable, fautes de frappe réalistes |
 | Observabilité | `infra/observability/` | ✅ Prometheus, Loki, Alloy, Grafana (dashboard provisionné), postgres-exporter, Alertmanager. CPU/mémoire des conteneurs lus via l'API Docker (proxy en lecture seule) ; cAdvisor retiré |
 | SIEM | `infra/observability/rules/`, `loki-rules/` | ✅ règles métriques + journaux → Alertmanager → moteur |
-| ml-detector | `services/ml-detector/` | ✅ 18 features, IsolationForest auto-calibré, anti-rebond, qualification par attribution ; ✅ `train.py` pour le classifieur supervisé (RandomForest) |
+| ml-detector | `services/ml-detector/` | ✅ 19 features, IsolationForest auto-calibré, anti-rebond, qualification par attribution ; ✅ `train.py` pour le classifieur supervisé (RandomForest) |
 | remediation-engine | `services/remediation-engine/` | ✅ politique YAML, corrélation, garde-fous, vérification par sonde, escalade, SSE, persistance SQLite, reprise après crash, chien de garde interne, fenêtre de maintenance planifiée (`/admin/pause`) ; tests `tests/test_policy.py` |
 | Accès Docker | `docker-proxy-rw` / `-ro` | ✅ proxys à regex : le moteur ne peut que lister, `restart` et `kill` (SIGHUP) |
 | dashboard | `services/dashboard/` | ✅ bandeau d'état, KPI, courbes, timeline temps réel, conteneurs, panneau assistant |
 | rag-assistant | `services/rag-assistant/` | ⚠️ code et image OK ; **non testé de bout en bout** (Ollama non installé sur le poste de dev) |
 | Chaos | `chaos/chaos.py` | ✅ 6 scénarios, mesure du RTO, étiquettes pour le ML |
 | Ansible | `infra/ansible/` | ⚠️ `deploy.yml`, `reset_demo.yml`, `teardown.yml` écrits, **non exécutés** (à lancer depuis WSL) |
-| Scripts Red Team | `attack/` | 🚧 à écrire par le binôme CYBER |
+| Scripts Red Team | `attack/` | ⚠️ `brute_force.py`, `injection_probe.py`, `http_flood.py`, `run_campaign.py` écrits ; **à valider depuis le vrai PC Attaquant** |
 | Vault | — | 🚧 non implémenté : secrets Docker + SOPS (voir ADR-006) |
 
 ## 3. Résultats mesurés (poste de dev, 19/10/2026, campagne `chaos/chaos.py`)
@@ -76,7 +76,7 @@ Autres vérifications :
 
 Les RTO de 38-40 s des scénarios ML se décomposent en : fenêtre glissante de 30 s + 2 fenêtres consécutives (anti-rebond) + actions + transaction témoin. Pour les réduire : fenêtre de 15 s, ou 1 seule fenêtre pour les violations d'invariant.
 
-**Non testé ici** : les scénarios d'attaque réels (brute force, injection, flood depuis le PC Attaquant). La chaîne de blocage est validée par événement injecté ; les scripts Red Team restent à écrire par le binôme CYBER (`attack/README.md`).
+**Non testé ici** : les scénarios d'attaque réels (brute force, injection, flood depuis le PC Attaquant). La chaîne de blocage est validée par événement injecté ; les scripts Red Team sont écrits (`attack/README.md`) mais restent à rejouer depuis le PC Attaquant.
 
 ## 4. Chaîne de détection → remédiation
 
