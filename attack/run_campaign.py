@@ -7,8 +7,10 @@ import sys
 import time
 from pathlib import Path
 
+from _common import DEFAULT_TARGET
+
 HERE = Path(__file__).resolve().parent
-TARGET = sys.argv[1] if len(sys.argv) > 1 else "https://localhost"
+TARGET = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_TARGET
 SCRIPTS = ["injection_probe.py", "brute_force.py", "http_flood.py"]
 
 for i, script in enumerate(SCRIPTS):

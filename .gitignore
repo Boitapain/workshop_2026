@@ -19,5 +19,9 @@ ml/data/*.parquet
 ml/data/*.csv
 !ml/data/.gitkeep
 
+# Labels générés par le kit d'attaque (à recopier sur l'hôte, pas à commiter)
+attack/data/*.csv
+!attack/data/.gitkeep
+
 # Office temp files
 ~$*

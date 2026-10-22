@@ -11,7 +11,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from _common import TLS, guard, label, last_incident, watch_remediation
+from _common import DEFAULT_TARGET, TLS, guard, label, last_incident, watch_remediation
 
 UA = "resilience-redteam-injection/1.0"
 
@@ -37,12 +37,12 @@ def send(target: str, payload: str) -> int:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("target", nargs="?", default="https://localhost")
+    ap.add_argument("target", nargs="?", default=DEFAULT_TARGET)
     ap.add_argument("--seconds", type=int, default=40)
     args = ap.parse_args()
     guard(args.target)
 
-    before = (last_incident() or {}).get("id")
+    before = (last_incident(args.target) or {}).get("id")
     print(f"▶ Sondage d'injection sur {args.target} pendant {args.seconds} s")
     start, n, codes = time.time(), 0, {}
     while time.time() - start < args.seconds:
@@ -56,7 +56,7 @@ def main() -> None:
     blocked = codes.get(403, 0)
     print(f"  {n} charges — réponses {codes}")
     print(f"  {blocked}/{n} bloquées par le WAF (403)" + ("  ✔ la défense tient" if blocked else "  ⚠ aucune bloquée !"))
-    watch_remediation(before)
+    watch_remediation(before, args.target)
 
 
 if __name__ == "__main__":

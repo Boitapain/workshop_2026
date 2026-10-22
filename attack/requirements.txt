@@ -1,0 +1,6 @@
+# Kit d'attaque Red Team — AUCUNE dépendance externe.
+# Tout est écrit avec la bibliothèque standard de Python (urllib, ssl, csv, concurrent.futures).
+# Pré-requis : Python 3.10+ (syntaxe `str | None`).
+#
+# Rien à installer : il suffit de copier le dossier attack/ sur le PC Attaquant et de lancer
+#   python brute_force.py

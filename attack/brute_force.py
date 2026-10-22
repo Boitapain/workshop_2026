@@ -11,7 +11,7 @@ import json
 import time
 import urllib.request
 
-from _common import TLS, guard, label, last_incident, watch_remediation
+from _common import DEFAULT_TARGET, TLS, guard, label, last_incident, watch_remediation
 
 UA = "resilience-redteam-bruteforce/1.0"       # empreinte constante : le WAF peut bloquer IP+UA
 
@@ -32,13 +32,13 @@ def attempt(target: str, i: int) -> int:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("target", nargs="?", default="https://localhost")
+    ap.add_argument("target", nargs="?", default=DEFAULT_TARGET)
     ap.add_argument("--rps", type=int, default=20)
     ap.add_argument("--seconds", type=int, default=40)
     args = ap.parse_args()
     guard(args.target)
 
-    before = (last_incident() or {}).get("id")
+    before = (last_incident(args.target) or {}).get("id")
     print(f"▶ Brute force sur {args.target} : ~{args.rps} tentatives/s pendant {args.seconds} s")
     start, i, codes = time.time(), 0, {}
     with cf.ThreadPoolExecutor(max_workers=args.rps) as pool:
@@ -51,7 +51,7 @@ def main() -> None:
     end = time.time()
     label("brute_force", start, end, "redteam-brute-force")
     print(f"  {i} tentatives — réponses {codes}  (403 = bloqué par le WAF, 401 = refus, 429 = rate-limit)")
-    watch_remediation(before)
+    watch_remediation(before, args.target)
 
 
 if __name__ == "__main__":
