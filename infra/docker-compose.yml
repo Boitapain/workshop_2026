@@ -3,7 +3,7 @@
 name: resilience
 
 x-hardening: &hardening
-  restart: unless-stopped
+  restart: always
   read_only: true
   tmpfs: [/tmp]
   cap_drop: [ALL]
@@ -372,7 +372,7 @@ services:
   ollama:
     profiles: [llm-local]
     image: ollama/ollama:0.11.10
-    restart: unless-stopped
+    restart: always
     volumes: [ollama-models:/root/.ollama]
     mem_limit: 8g
     networks: [llm]

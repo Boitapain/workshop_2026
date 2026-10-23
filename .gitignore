@@ -25,3 +25,7 @@ attack/data/*.csv
 
 # Office temp files
 ~$*
+
+# Watchdog du labo
+infra/.lab_paused
+infra/watchdog.log
