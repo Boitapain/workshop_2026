@@ -31,7 +31,7 @@ Le certificat TLS est auto-signé (`secrets/tls_cert`) : le navigateur affiche u
 |-----------|----------|------|
 | auth-service | `services/auth-service/` | ✅ register / login / refresh / logout, JWT RS256 + JWKS, argon2id, verrouillage progressif, révocation interne (globale par époque, par compte) |
 | payment-service | `services/payment-service/` | ✅ comptes, virements idempotents (`Idempotency-Key`), verrous ordonnés, anti-IDOR, mode lecture seule interne |
-| front | `services/front/` | ✅ React + Tailwind : connexion, solde, virement, historique |
+| front | `services/front/` | ✅ React + Tailwind : connexion, solde, virement, historique ; rafraîchissement automatique toutes les 3 s (indicateur « En direct ») |
 | PostgreSQL | `infra/postgres/` | ✅ schéma + rôles à moindre privilège ; journal des écritures sans valeurs de paramètres |
 | pg-backup | `services/pg-backup/` | ✅ dump toutes les 2 min, vérifié, marqué « sain » seulement si la sonde est OK ; `POST /restore` (données métier, journal d'audit préservé) |
 | WAF | `infra/waf/` | ✅ ModSecurity + OWASP CRS (PL1), TLS, liste blanche des routes `/api`, rate-limit, deny-list IP **et** empreinte IP+UA dynamiques, mode strict, journal JSON |
@@ -46,7 +46,7 @@ Le certificat TLS est auto-signé (`secrets/tls_cert`) : le navigateur affiche u
 | rag-assistant | `services/rag-assistant/` | ⚠️ code et image OK ; **non testé de bout en bout** (Ollama non installé sur le poste de dev) |
 | Chaos | `chaos/chaos.py` | ✅ 6 scénarios, mesure du RTO, étiquettes pour le ML |
 | Ansible | `infra/ansible/` | ⚠️ `deploy.yml`, `reset_demo.yml`, `teardown.yml` écrits, **non exécutés** (à lancer depuis WSL) |
-| Scripts Red Team | `attack/` | ⚠️ `brute_force.py`, `injection_probe.py`, `http_flood.py`, `run_campaign.py` écrits ; **à valider depuis le vrai PC Attaquant** |
+| Scripts Red Team | `attack/` | ⚠️ kit portable (stdlib Python, cible par défaut `https://192.168.137.1`, mode aveugle) : `brute_force.py`, `injection_probe.py`, `http_flood.py`, `run_campaign.py` ; **à valider depuis le vrai PC Attaquant** |
 | Vault | — | 🚧 non implémenté : secrets Docker + SOPS (voir ADR-006) |
 
 ## 3. Résultats mesurés (poste de dev, 19/10/2026, campagne `chaos/chaos.py`)
@@ -105,7 +105,8 @@ Trois sources d'événements alimentent le moteur. Le **ML** est la source princ
 Sans classifieur, le type d'incident est déduit par **attribution** : le groupe de features qui s'écarte le plus de la référence désigne le type. Pour passer à un classifieur supervisé :
 
 ```bash
-python chaos/chaos.py run all                       # + scripts Red Team → ml/data/labels.csv
+python chaos/chaos.py run all                       # → ml/data/labels.csv
+cat attack/data/labels.csv >> ml/data/labels.csv    # labels du kit Red Team (sans l'en-tête)
 docker cp ml/data/labels.csv resilience-ml-detector-1:/data/labels.csv
 docker compose -f infra/docker-compose.yml exec ml-detector python /srv/train.py
 docker compose -f infra/docker-compose.yml restart ml-detector
@@ -143,6 +144,7 @@ docker compose -f infra/docker-compose.yml restart ml-detector
 
 ## 8. Pièges connus
 
+- **Images locales** : les services construits sur place portent `pull_policy: build`, sinon Compose tente de télécharger les images `resilience/*` depuis un registre où elles n'existent pas. `postgres-exporter` attend que PostgreSQL soit sain, et Grafana attend Prometheus et Loki.
 - **Fins de ligne** : `.gitattributes` force LF ; un `02-roles.sh` en CRLF casse l'initialisation de PostgreSQL.
 - **Réseaux `internal`** : Docker ne publie pas de port depuis un réseau interne ; d'où le réseau `admin` (sans NAT sortant) pour Prometheus, Grafana et le dashboard.
 - **`docker kill`** désactive la politique de redémarrage du conteneur : c'est alors le moteur qui le relance. Un crash réel (sortie du processus) est relancé par Docker lui-même.

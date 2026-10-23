@@ -1,6 +1,6 @@
 # 05 — CYBER : menaces, WAF, SIEM, durcissement, secrets
 
-> Cadre : toutes les actions Red Team visent **uniquement notre propre plateforme**, sur le réseau isolé `RESILIENCE-G<n>`. Les scripts de `attack/` refusent toute autre cible (`guard()` dans `attack/_common.py`).
+> Cadre : toutes les actions Red Team visent **uniquement notre propre plateforme**, sur le réseau isolé du labo. Les scripts de `attack/` refusent toute cible autre que `localhost`, `127.0.0.1` et l'hôte du labo (`RESILIENCE_LAB_HOST`, par défaut `192.168.137.1`) : voir `guard()` dans `attack/_common.py`.
 
 Ce document décrit **ce qui est réellement en place** dans le dépôt. Les écarts avec la cible sont listés au §8.
 
@@ -19,7 +19,7 @@ Chaque ligne correspond à un scénario opérationnel EBIOS ([07-gouvernance.md]
 
 ## 2. Scénarios Red Team
 
-Scripts lancés depuis le PC Attaquant (`attack/`, mode d'emploi dans [attack/README.md](../attack/README.md)).
+Kit **portable** lancé depuis le PC Attaquant (`attack/`, mode d'emploi dans [attack/README.md](../attack/README.md)). Il ne dépend que de la bibliothèque standard de Python 3.10+ : on copie le seul dossier `attack/` sur le PC Attaquant, sans rien installer. La cible par défaut est `https://192.168.137.1` (le PC Hôte sur le hotspot), via le port 443.
 
 | Script | Scénario EBIOS | Classe ML visée | Effet attendu |
 |--------|----------------|-----------------|---------------|
@@ -28,7 +28,9 @@ Scripts lancés depuis le PC Attaquant (`attack/`, mode d'emploi dans [attack/RE
 | `http_flood.py` | SO3 — saturation du service | `http_flood` | Source bloquée + mode strict |
 | `run_campaign.py` | les trois à la suite | — | Une campagne étiquetée complète |
 
-Chaque script utilise un User-Agent constant et distinct, horodate l'épisode dans `ml/data/labels.csv` (données d'entraînement du classifieur) et affiche le RTO mesuré par le moteur.
+Chaque script utilise un User-Agent constant et distinct et horodate l'épisode dans `attack/data/labels.csv` (non commité). Ces labels sont ensuite fusionnés dans `ml/data/labels.csv` sur le PC Hôte pour entraîner le classifieur.
+
+**Mode aveugle.** Le dashboard ops n'est publié que sur `127.0.0.1` du PC Hôte : depuis le PC Attaquant, les scripts lancent l'attaque sans attendre le retour d'incident. Le RTO et les actions de remédiation se lisent sur l'écran défenseur (dashboard ops et Grafana). Lancé depuis le PC Hôte lui-même, le kit affiche le retour d'incident en direct.
 
 Les scénarios SO4 (altération des données) et SO5 (panne) sont rejoués par `chaos/chaos.py` ([08-demo-chaos.md](08-demo-chaos.md)).
 
