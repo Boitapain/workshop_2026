@@ -83,7 +83,11 @@ docker compose -f infra/docker-compose.yml exec remediation-engine python -c "im
 
 ## Note sur l'IP source
 
-Depuis le **vrai PC Attaquant** (réseau du hotspot), l'IP réelle est visible par le WAF et le
-blocage par IP s'applique. En labo mono-PC (tout en Docker), le WAF ne voit que la passerelle
-Docker : le moteur bloque alors par **empreinte IP + User-Agent** (chaque script garde un
-User-Agent constant et distinct). Voir [ADR-009](../docs/adr.md).
+**Non vérifié depuis le vrai PC Attaquant.** Le seul test réalisé (depuis le PC Hôte, 19/10) montre
+que le WAF voit la passerelle Docker `172.30.0.1`, pas l'IP du client. Il est probable que ce soit
+aussi le cas depuis le hotspot avec Docker Desktop. Le moteur bloque alors par **empreinte IP + User-Agent**
+(chaque script garde un User-Agent constant et distinct) et ne bloque jamais l'IP de la passerelle.
+Si le test montre l'IP réelle du PC Attaquant, le blocage par IP s'applique automatiquement.
+
+Test à faire avant la démo : lancer un script depuis le PC Attaquant, puis lire `remote_addr`
+dans les journaux du WAF (Grafana → Loki, `{service="waf"}`). Consigner le résultat dans [ADR-009](../docs/adr.md).
